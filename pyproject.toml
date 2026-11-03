@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "slidegrab"
+version = "0.1.0"
+description = "Turn a YouTube lecture or quiz video into its distinct slides, their text, and the narration for each — without watching it."
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.10"
+dependencies = [
+    "numpy",
+    "Pillow",
+    "PyMuPDF",
+    "python-dotenv",
+]
+
+[project.optional-dependencies]
+# Scene-cut detection for quiz decks (mode "cuts"). Installs the `scenedetect`
+# binary; slidegrab calls it as a subprocess. Lectures ("sampled" mode) don't need it.
+cuts = ["scenedetect[opencv-headless]"]
+test = ["pytest"]
+
+[project.scripts]
+slidegrab = "slidegrab.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["tests"]
