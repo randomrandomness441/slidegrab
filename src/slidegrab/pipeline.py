@@ -110,9 +110,22 @@ def run(source: str, out: Path, mode: str = "lecture", provider: Provider | None
     (work / "slides.json").write_text(json.dumps(records, indent=2, ensure_ascii=False))
     (work / "slides.md").write_text(_markdown(title, records))
 
+    unread = len(kept) - len(slides)
     summary.update({"read": True, "reader": f"{provider.name}/{provider.model}",
-                    "slides_read": len(slides), "slides_unread": len(kept) - len(slides),
+                    "slides_read": len(slides), "slides_unread": unread,
                     "truncated": sum(1 for s in slides if s.truncated)})
+    if unread:
+        # INCOMPLETE. Do not pair questions and do not mark the video done: a block whose
+        # answer slide was never read would be reported "no answer slide" — a false
+        # statement about the deck, stored as a result — and a done marker would make the
+        # re-run that fixes it skip the video.
+        summary["complete"] = False
+        (work / "summary.partial.json").write_text(json.dumps(summary, indent=2))
+        print(f"  INCOMPLETE: {unread} of {len(kept)} slides unread — slides.json is partial"
+              + ("; quiz pairing skipped" if mode == "quiz" else "")
+              + ". Re-run to finish; nothing is marked done.", flush=True)
+        return summary
+    summary["complete"] = True
     if mode == "quiz":
         recs = [asdict(s) for s in slides]
         pairs = quiz.extract_pairs(recs, provider, vid)
@@ -125,6 +138,7 @@ def run(source: str, out: Path, mode: str = "lecture", provider: Provider | None
                   "differently and quiz.py's rules need extending. Look before believing it.", flush=True)
     summary["minutes"] = round((time.time() - started) / 60, 1)
     done.write_text(json.dumps(summary, indent=2))
+    (work / "summary.partial.json").unlink(missing_ok=True)
     return summary
 
 

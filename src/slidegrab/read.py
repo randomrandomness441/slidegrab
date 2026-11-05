@@ -47,7 +47,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-from .errors import ProviderError, Truncated
+from .errors import ProviderError, ProviderExhausted, Truncated
 from .providers.base import Provider
 
 SYSTEM = (
@@ -142,29 +142,58 @@ def read_slide(path: Path, cache: Path, provider: Provider, t: float = 0.0) -> S
     return slide
 
 
+MAX_CONSECUTIVE_FAILURES = 5     # an UNMEASURED guard: enough to ride out a blip, few enough
+                                 # that an outage doesn't burn minutes of retries per slide
+
+
 def read_all(frames: list, provider: Provider, cache: Path, workers: int = WORKERS) -> list[Slide]:
     """Read every frame (objects with .path and .start). Failures are loud, uncached,
-    and absent from the output — never blank records. Order follows `frames`."""
+    and absent from the output — never blank records. Order follows `frames`.
+
+    STOPS after MAX_CONSECUTIVE_FAILURES in a row, or at once if the account is out of
+    credit. A network outage otherwise costs a full retry-and-backoff cycle PER SLIDE
+    (47 slides were lost this way in one run, ~15 minutes of waiting) and cannot succeed.
+    Slides not attempted are reported as unread, exactly like failed ones."""
+    import threading
     cache.mkdir(parents=True, exist_ok=True)
     failed: list[str] = []
-    done = 0
+    skipped: list[str] = []
+    state = {"consecutive": 0, "abort": False, "done": 0}
+    lock = threading.Lock()
 
     def one(f) -> Slide | None:
-        nonlocal done
+        stem = Path(f.path).stem
+        if state["abort"]:
+            skipped.append(stem)
+            return None
         try:
             s = read_slide(Path(f.path), cache, provider, t=f.start)
+            with lock:
+                state["consecutive"] = 0
         except ProviderError as e:
-            failed.append(Path(f.path).stem)
-            print(f"    {Path(f.path).stem}: FAILED — {e}", flush=True)
+            failed.append(stem)
+            print(f"    {stem}: FAILED — {e}", flush=True)
+            with lock:
+                state["consecutive"] += 1
+                if isinstance(e, ProviderExhausted) or state["consecutive"] >= MAX_CONSECUTIVE_FAILURES:
+                    if not state["abort"]:
+                        why = ("the account is out of credit" if isinstance(e, ProviderExhausted)
+                               else f"{state['consecutive']} failures in a row")
+                        print(f"    STOPPING reading: {why}. Remaining slides are left unread.", flush=True)
+                    state["abort"] = True
             s = None
-        done += 1
-        if done % 10 == 0 or done == len(frames):
-            print(f"    read {done}/{len(frames)}", flush=True)
+        with lock:
+            state["done"] += 1
+            n = state["done"]
+        if n % 10 == 0 or n == len(frames):
+            print(f"    read {n}/{len(frames)}", flush=True)
         return s
 
     with ThreadPoolExecutor(max_workers=workers) as pool:
         out = [s for s in pool.map(one, frames) if s is not None]
-    if failed:
-        print(f"\n  {len(failed)} slide(s) could not be read: {', '.join(failed)}\n"
-              "  Re-run to retry them. They are absent from the output, not blank.")
+    unread = failed + skipped
+    if unread:
+        print(f"\n  {len(unread)} slide(s) NOT read ({len(failed)} failed, {len(skipped)} not attempted): "
+              f"{', '.join(sorted(unread)[:12])}{' …' if len(unread) > 12 else ''}\n"
+              "  Re-run to retry them (read slides are cached). They are absent, not blank.")
     return out

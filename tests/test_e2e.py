@@ -60,3 +60,22 @@ def test_quiz_mode_cuts_finds_distinct_slides(video, tmp_path, fake):
     v, _ = video
     s = pipeline.run(str(v), tmp_path / "out", mode="quiz", provider=fake)
     assert s["slides"] == 3
+
+
+def test_partial_read_is_not_marked_done_and_skips_pairing(video, tmp_path):
+    """A run where some slides could not be read must stay re-runnable."""
+    from slidegrab.errors import ProviderError
+
+    class Flaky:
+        name, model = "flaky", "f"
+        def vision(self, system, prompt, image_path, max_tokens):
+            if "f_00" in str(image_path) and int(Path(image_path).stem[-3:]) % 2 == 0:
+                raise ProviderError("boom")
+            return "SLIDE: ok\nIMAGE: none\nINPHOTO: none"
+        def text(self, *a, **k): raise AssertionError("pairing must not run on a partial read")
+    v, _ = video
+    out = tmp_path / "out"
+    s = pipeline.run(str(v), out, mode="lecture", provider=Flaky(), every=1.0)
+    assert s["complete"] is False and s["slides_unread"] > 0
+    assert not (out / "v" / "summary.json").exists()
+    assert (out / "v" / "summary.partial.json").exists()

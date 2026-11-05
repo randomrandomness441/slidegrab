@@ -116,6 +116,39 @@ never cached as blank slides (they are listed and absent, so a re-run retries th
   verbatim on that slide; those pairs carry a `review` list.
 * **No audio, OCR-free by design:** no speech-to-text, no separate OCR engine.
 
+## What has been verified (and what hasn't)
+
+Run against a real 72-minute quiz deck that FundaQuiz's original pipeline had already
+processed (same video, same compare box `0,0,1020,720`, same z.ai `glm-4.5v` reader):
+
+| Stage | Original | slidegrab | |
+|---|---|---|---|
+| scenes → kept → distinct slides | 247 → 230 → 117 | 247 → 230 → 117 | identical |
+| slide text vs the original's transcripts (117 slides) | — | 88% exact, 97% after ignoring bullet glyphs (`*`/`-`/`•`) and underscore runs | 4 slides differ in content (one title card read differently) |
+| question anchors | 21 | 21 | same |
+| Q/A pairs resolved by **structure** (no model) | 4 | 4 (+1 below) | agree |
+| Q/A pairs where a **model picks** among competing slides | 3 | 2 | **not reproducible run to run**: 3 of 21 blocks flipped between answered and flagged |
+
+* The model-pick step is non-deterministic even at temperature 0. Those pairs carry a
+  `review` list; treat them as candidates, not facts.
+* Porting found a bug in the original: the multi-part-question rule skipped the
+  plausibility check, so a conference title card plus a rules slide were accepted as the
+  answer to a music question. Fixed here (regression test in `tests/test_quiz.py`); the
+  original `slide_qa.py` still has it. After the fix this deck gives **5 verified / 16
+  flagged** — the original's 7 / 14 included that false pair.
+* The same run lost 47 slide reads to a network outage. They were reported, not cached as
+  blank, the video was not marked done, quiz pairing was skipped, and a re-run read only the
+  missing ones. That is where the circuit breaker (stop after 5 consecutive failures) and the
+  "incomplete" handling come from.
+
+**Not verified:**
+* **`lecture` mode on a real slide lecture.** It is covered by a synthetic-video test, and on
+  one real video — an interview, i.e. a talking head with almost no slides — it produced 2
+  slides and printed its "mostly live footage" warning. A CppCon-style talk has not been run.
+  Try one with `--calibrate` first and check `deck.pdf` before trusting the slide count.
+* **Gemini and Claude connectors** against the live APIs (see Providers).
+* Narration alignment against real YouTube captions (tested on a hand-written `.vtt`).
+
 ## Tests
 
 ```bash

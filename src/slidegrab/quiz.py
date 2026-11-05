@@ -241,6 +241,18 @@ def choose_answer(block: dict, slides: list[dict], provider: Provider) -> dict:
     # The question's own '?' count says how many parts to expect.
     parts = block["question"].count("?")
     if parts > 1 and len(texted) == parts:
+        # EVERY part must pass the plausibility check. This branch used to return without
+        # calling it, so any two text slides after a question with two '?' were joined and
+        # accepted — on a real deck the title card ("INDUSTRY AND ALUMNI RELATIONS / QuNiTe /
+        # MONTY QUIZ 3.0") and a rules slide ("The Deal / 20 questions") became the answer to
+        # a music question, with the model never consulted. The same input is rejected 6/6
+        # when plausible() is actually called. A rule that skips the check it was written
+        # alongside is the failure; the count of '?' is a guess about layout, not a guard.
+        for j in texted:
+            ok, why = plausible(provider, block["question"], slides[j]["text"])
+            if not ok:
+                return _fail(j, f"not the kind of thing the question asks for "
+                                f"(part on {slides[j]['name']}): {why}", by="structure")
         return {"index": texted[0], "by": "structure", "problem": None, "why": "",
                 "answer": "\n".join(slides[j]["text"].strip() for j in texted),
                 "spans": [slides[j]["name"] for j in texted]}

@@ -44,3 +44,23 @@ def test_batched_layout_pairs_by_position_only_when_counts_match(fake):
 def test_rounds_from_numbers():
     slides = [S("a", "1\nOne thing?", 1), S("b", "2\nTwo thing?", 2), S("c", "1\nNew round?", 1)]
     assert [b["round"] for b in quiz.build_blocks(slides)] == [1, 1, 2]
+
+
+def test_multipart_rule_still_runs_the_plausibility_check():
+    """Regression, from a real deck: a question with two '?' followed by a title card and a
+    rules slide used to be 'answered' by both, with the model never asked."""
+    bad = '{"verdict":"IMPLAUSIBLE","why":"event title card"}'
+    p = FakeProvider([bad])
+    slides = [S("q", "20\nWho sings it? Which album?", 20),
+              S("card", "INDUSTRY AND ALUMNI\nQuNiTe\nMONTY QUIZ 3.0"),
+              S("rules", "The Deal\n* 20 questions")]
+    pair = quiz.extract_pairs(slides, p)[0]
+    assert pair["answer"] == "" and "title card" in pair["problem"]
+    assert any(c[0] == "text" for c in p.calls)          # the model WAS consulted
+
+
+def test_multipart_genuine_parts_still_joined(fake):
+    slides = [S("q", "5\nWhat ritual? Who were these people?", 5),
+              S("a1", "Cleaning the courtyard with brooms"), S("a2", "Anita Pratap")]
+    pair = quiz.extract_pairs(slides, fake)[0]           # fake says PLAUSIBLE
+    assert pair["problem"] is None and "brooms" in pair["answer"] and "Pratap" in pair["answer"]

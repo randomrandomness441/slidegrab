@@ -6,3 +6,4 @@ __pycache__/
 slidegrab_out/
 dist/
 build/
+*-Scenes.csv

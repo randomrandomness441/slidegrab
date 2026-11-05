@@ -186,11 +186,27 @@ def grab_frame(video: Path, scene: Frame, dest: Path) -> Path:
     return dest
 
 
+def _cached_scenes(video: Path, cache: Path, compare_box: Box | None) -> list[Frame]:
+    """Scene detection is the slow stage (~8 min for a 72-minute video), so a resume must
+    not repeat it. Keyed on the video's size+mtime and the compare box: a different box
+    changes what counts as a cut, so it must not reuse another box's scenes."""
+    import json
+    st = video.stat()
+    key = {"size": st.st_size, "mtime": int(st.st_mtime), "box": list(compare_box) if compare_box else None}
+    if cache.exists():
+        got = json.loads(cache.read_text())
+        if got.get("key") == key:
+            return [Frame(n, a, b) for n, a, b in got["scenes"]]
+    scenes = detect_scenes(video, compare_box)
+    cache.write_text(json.dumps({"key": key, "scenes": [[s.number, s.start, s.end] for s in scenes]}))
+    return scenes
+
+
 def frames_from_cuts(video: Path, outdir: Path, compare_box: Box | None = None,
                      min_seconds: float = MIN_SCENE_SECONDS) -> tuple[list[Frame], dict]:
-    scenes = detect_scenes(video, compare_box)
-    kept = select_slides(scenes, min_seconds)
     outdir.mkdir(parents=True, exist_ok=True)
+    scenes = _cached_scenes(video, outdir / "scenes.json", compare_box)
+    kept = select_slides(scenes, min_seconds)
     for s in kept:
         s.path = grab_frame(video, s, outdir / f"s{s.number:04d}.jpg")
     return kept, {"mode": "cuts", "scenes": len(scenes), "kept": len(kept)}

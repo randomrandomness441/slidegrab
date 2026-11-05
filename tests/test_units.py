@@ -121,3 +121,34 @@ def test_no_key_is_a_clear_error(monkeypatch, tmp_path):
         get_provider()
     with pytest.raises(ProviderError, match="GEMINI_API_KEY"):
         get_provider("gemini")
+
+
+def test_read_all_stops_after_consecutive_failures_and_reports_unread(tmp_path):
+    from slidegrab.read import MAX_CONSECUTIVE_FAILURES, read_all
+
+    class Down:
+        name, model = "down", "d"
+        def __init__(self): self.calls = 0
+        def vision(self, *a, **k):
+            self.calls += 1
+            raise ProviderError("network unreachable")
+    frames = [Frame(i, i, i + 1, make_slide(tmp_path / f"s{i:03d}.jpg", f"S{i}")) for i in range(30)]
+    p = Down()
+    out = read_all(frames, p, tmp_path / "c", workers=1)
+    assert out == [] and p.calls == MAX_CONSECUTIVE_FAILURES          # not 30
+    assert not list((tmp_path / "c").glob("*.json"))                  # nothing cached
+
+
+def test_exhausted_account_stops_immediately(tmp_path):
+    from slidegrab.read import read_all
+
+    class Broke:
+        name, model = "broke", "b"
+        def __init__(self): self.calls = 0
+        def vision(self, *a, **k):
+            self.calls += 1
+            raise ProviderExhausted("no credit")
+    frames = [Frame(i, i, i + 1, make_slide(tmp_path / f"s{i:03d}.jpg", f"S{i}")) for i in range(10)]
+    p = Broke()
+    read_all(frames, p, tmp_path / "c", workers=1)
+    assert p.calls == 1
